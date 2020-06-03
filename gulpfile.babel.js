@@ -1,13 +1,14 @@
-import fs from "fs";
+import fs from 'fs';
 import gulp from 'gulp';
 import {merge} from 'event-stream'
 import browserify from 'browserify';
 import source from 'vinyl-source-stream';
 import buffer from 'vinyl-buffer';
 import preprocessify from 'preprocessify';
-import gulpif from "gulp-if";
+import gulpif from 'gulp-if';
 
 const $ = require('gulp-load-plugins')();
+const runSequence = require('gulp4-run-sequence')
 
 var production = process.env.NODE_ENV === "production";
 var target = process.env.TARGET || "chrome";
@@ -36,34 +37,12 @@ var manifest = {
   }
 }
 
-// Tasks
-gulp.task('clean', () => {
-  return pipe(`./build/${target}`, $.clean())
-})
-
-gulp.task('build', (cb) => {
-  $.runSequence('clean', 'styles', 'ext', cb)
-});
-
-gulp.task('watch', ['build'], () => {
-  $.livereload.listen();
-
-  gulp.watch(['./src/**/*']).on("change", () => {
-    $.runSequence('build', $.livereload.reload);
-  });
-});
-
-gulp.task('default', ['build']);
-
-gulp.task('ext', ['manifest', 'js'], () => {
-  return mergeAll(target)
-});
 
 
 // -----------------
 // COMMON
 // -----------------
-gulp.task('js', () => {
+gulp.task('js', async () => {
   return buildJS(target)
 })
 
@@ -99,20 +78,42 @@ gulp.task("manifest", () => {
 // DIST
 // -----------------
 gulp.task('dist', (cb) => {
-  $.runSequence('build', 'zip', cb)
+  runSequence('build', 'zip', cb)
 });
 
 gulp.task('zip', () => {
   return pipe(`./build/${target}/**/*`, $.zip(`${target}.zip`), './dist')
 })
 
+// Tasks
+gulp.task('clean', () => {
+  return pipe(`./build/${target}`, $.clean())
+})
+
+gulp.task('build', async (cb) => {
+  runSequence('clean', 'styles', 'ext', cb)
+});
+
+gulp.task('watch', gulp.series('build', async function() {
+   // Do something after build finished.
+  $.livereload.listen();
+  gulp.watch(['./src/**/*']).on("change", () => {
+    runSequence('build', $.livereload.reload);
+  });
+}));
+
+gulp.task('default', gulp.series('build'));
+
+gulp.task('ext', gulp.series('manifest','js', async function() {
+  return mergeAll(target)
+}));
 
 // Helpers
 function pipe(src, ...transforms) {
   return transforms.reduce((stream, transform) => {
     const isDest = typeof transform === 'string'
     return stream.pipe(isDest ? gulp.dest(transform) : transform)
-  }, gulp.src(src))
+  }, gulp.src(src,{ allowEmpty: true}))
 }
 
 function mergeAll(dest) {
@@ -139,7 +140,7 @@ function buildJS(target) {
       entries: 'src/scripts/' + file,
       debug: true
     })
-    .transform('babelify', { presets: ['es2015'] })
+    .transform('babelify', { presets: ['@babel/preset-env'] })
     .transform(preprocessify, {
       includeExtensions: ['.js'],
       context: context
@@ -149,11 +150,11 @@ function buildJS(target) {
     .pipe(buffer())
     .pipe(gulpif(!production, $.sourcemaps.init({ loadMaps: true }) ))
     .pipe(gulpif(!production, $.sourcemaps.write('./') ))
-    .pipe(gulpif(production, $.uglify({ 
+    .pipe(gulpif(production, $.uglify({
       "mangle": false,
       "output": {
         "ascii_only": true
-      } 
+      }
     })))
     .pipe(gulp.dest(`build/${target}/scripts`));
   });
